@@ -4,6 +4,7 @@ import authRoutes from "./routes/authRoutes.ts"; // <-- .js
 import { requireAuth } from "./auth_middleware.ts";
 import amenityRoutes from "./routes/get_ammenities.ts";
 import reservationRoutes from "./routes/reservations.ts";
+import userRoutes from "./routes/user.ts";
 
 const app = express();
 const PORT = 3000;
@@ -15,6 +16,7 @@ app.use(express.json());
 app.use("/auth", authRoutes);
 app.use("/amenities", amenityRoutes);
 app.use("/reservations", reservationRoutes);
+app.use("/user", userRoutes);
 
 
 // protected route
