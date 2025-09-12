@@ -17,7 +17,6 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 
     try {
         const payload = jwt.verify(token as string, process.env.JWT_SECRET!);
-        console.log("JWT payload:", payload);
         (req as any).user = payload;
         next();
     } catch (err) {
