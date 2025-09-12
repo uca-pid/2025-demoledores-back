@@ -25,15 +25,21 @@ export const createReservation = async (req: Request, res: Response) => {
 
     if (start >= end) return res.status(400).json({ message: "Start time must be before end time" });
 
-    const conflicts = await prisma.reservation.findMany({
+    const overlappingCount = await prisma.reservation.count({
       where: {
         amenityId,
         status: "confirmed",
-        OR: [{ startTime: { lte: end }, endTime: { gte: start } }],
+        AND: [
+          { startTime: { lt: end } },
+          { endTime: { gt: start } },
+        ],
       },
     });
 
-    if (conflicts.length > 0) return res.status(400).json({ message: "Time slot already reserved" });
+    if (overlappingCount >= amenity.capacity) {
+      return res.status(400).json({ message: "Time slot full" });
+    }
+
 
     const reservation = await prisma.reservation.create({
       data: {
@@ -95,6 +101,38 @@ export const cancelReservation = async (req: Request, res: Response) => {
     });
 
     res.json(cancelled);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const getAmenityReservations = async (req: Request, res: Response) => {
+  try {
+    const { amenityId } = req.params;
+    const { startDate, endDate } = req.query as { startDate?: string; endDate?: string };
+
+    const where: any = {
+      amenityId: Number(amenityId),
+      status: "confirmed",
+    };
+
+    // opcional: filtrar por rango de fechas si te lo pasan
+    if (startDate || endDate) {
+      where.startTime = {};
+      if (startDate) where.startTime.gte = new Date(String(startDate));
+      if (endDate) where.startTime.lt = new Date(String(endDate));
+    }
+
+    const reservations = await prisma.reservation.findMany({
+      where,
+      orderBy: { startTime: "asc" },
+      include: {
+        user: { select: { id: true, name: true } }, // <--- aquí incluimos el nombre
+      },
+    });
+
+    res.json(reservations);
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Internal server error" });
