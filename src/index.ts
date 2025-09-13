@@ -5,6 +5,7 @@ import { requireAuth } from "./auth_middleware.ts";
 import amenityRoutes from "./routes/get_ammenities.ts";
 import reservationRoutes from "./routes/reservations.ts";
 import userRoutes from "./routes/user.ts";
+import apartmentRoutes from "./routes/apartmentRoutes.ts";
 import { emailService } from "./services/emailService.ts";
 
 const app = express();
@@ -29,6 +30,7 @@ app.use("/auth", authRoutes);
 app.use("/amenities", amenityRoutes);
 app.use("/reservations", reservationRoutes);
 app.use("/user", userRoutes);
+app.use("/apartments", apartmentRoutes);
 
 
 // protected route

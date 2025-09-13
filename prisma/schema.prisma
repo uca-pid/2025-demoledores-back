@@ -26,6 +26,9 @@ model User {
   ownedApartments Apartment[] @relation("OwnedApartments")
 
   reservations Reservation[] @relation("UserReservations")
+  resetPasswordToken    String?       @unique
+  resetPasswordExpires  DateTime?
+  createdAt             DateTime      @default(now())
 }
 
 
@@ -52,7 +55,6 @@ model Reservation {
 
   @@index([amenityId, startTime, endTime]) 
 }
-
 
 model Apartment {
   id           Int      @id @default(autoincrement())
