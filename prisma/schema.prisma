@@ -15,15 +15,20 @@ datasource db {
 }
 
 model User {
-  id                    Int           @id @default(autoincrement())
-  name                  String
-  email                 String        @unique
-  password              String
-  resetPasswordToken    String?       @unique
-  resetPasswordExpires  DateTime?
-  createdAt             DateTime      @default(now())
-  reservations          Reservation[]
+  id        Int       @id @default(autoincrement())
+  name      String
+  email     String    @unique
+  password  String
+  role      String?   @default("tenant") // "owner" | "tenant" | "admin"
+
+  apartmentId Int?
+  apartment   Apartment? @relation("TenantApartments", fields: [apartmentId], references: [id])
+  ownedApartments Apartment[] @relation("OwnedApartments")
+
+  reservations Reservation[] @relation("UserReservations")
 }
+
+
 
 model Amenity {
   id           Int           @id @default(autoincrement())
@@ -35,7 +40,7 @@ model Amenity {
 
 model Reservation {
   id        Int       @id @default(autoincrement())
-  user      User      @relation(fields: [userId], references: [id])
+  user      User      @relation("UserReservations", fields: [userId], references: [id])
   userId    Int
   amenity   Amenity   @relation(fields: [amenityId], references: [id])
   amenityId Int
@@ -46,4 +51,19 @@ model Reservation {
   createdAt DateTime  @default(now())
 
   @@index([amenityId, startTime, endTime]) 
+}
+
+
+model Apartment {
+  id           Int      @id @default(autoincrement())
+  unit         String
+  floor        Int
+  areaM2       Float?
+  observations String?
+  rooms       Int
+
+  ownerId Int
+  owner   User     @relation("OwnedApartments", fields: [ownerId], references: [id])
+
+  tenants User[]   @relation("TenantApartments")
 }
