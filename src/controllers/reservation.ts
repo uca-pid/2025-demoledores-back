@@ -155,24 +155,42 @@ export const getAmenityReservations = async (req: Request, res: Response) => {
       status: "confirmed",
     };
 
-    // opcional: filtrar por rango de fechas si te lo pasan
+    // CORRECCIÓN: Usar UTC para las fechas de consulta
     if (startDate || endDate) {
-      where.startTime = {};
-      if (startDate) where.startTime.gte = new Date(String(startDate));
-      if (endDate) where.startTime.lt = new Date(String(endDate));
+      if (startDate && endDate) {
+        // Para un rango específico de fechas, trabajar en UTC
+        const queryStartDate = new Date(String(startDate) + 'T00:00:00.000Z'); // Forzar UTC
+        const queryEndDate = new Date(String(endDate) + 'T23:59:59.999Z');     // Forzar UTC
+
+
+        where.AND = [
+          { startTime: { lte: queryEndDate } },
+          { endTime: { gte: queryStartDate } },
+        ];
+      } else if (startDate) {
+        const start = new Date(String(startDate) + 'T00:00:00.000Z'); // Forzar UTC
+        where.startTime = { gte: start };
+      } else if (endDate) {
+        const end = new Date(String(endDate) + 'T23:59:59.999Z'); // Forzar UTC
+        where.endTime = { lte: end };
+      }
     }
+
+
 
     const reservations = await prisma.reservation.findMany({
       where,
       orderBy: { startTime: "asc" },
       include: {
-        user: { select: { id: true, name: true } }, // <--- aquí incluimos el nombre
+        user: { select: { id: true, name: true } },
       },
     });
 
+
+
     res.json(reservations);
   } catch (error) {
-    console.error(error);
+    console.error('Error in getAmenityReservations:', error);
     res.status(500).json({ message: "Internal server error" });
   }
 };
