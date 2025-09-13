@@ -58,3 +58,31 @@ export const updateUserPassword = async (req: Request, res: Response) => {
     res.status(500).json({ message: "Internal server error" });
   }
 };
+
+// DELETE /user – Delete user account
+export const deleteUser = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.id;
+
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+    // Check if user exists
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Delete user's reservations first (due to foreign key constraints)
+    await prisma.reservation.deleteMany({
+      where: { userId: userId }
+    });
+
+    // Delete the user
+    await prisma.user.delete({
+      where: { id: userId }
+    });
+
+    res.json({ message: "User account deleted successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
