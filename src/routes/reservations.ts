@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../auth_middleware.ts";
-import { createReservation, getUserReservations, cancelReservation, getAmenityReservations } from "../controllers/reservation.ts";
+import { createReservation, getUserReservations, cancelReservation, getAmenityReservations, hideReservationFromUser } from "../controllers/reservation.ts";
 
 
 const router = Router();
@@ -18,5 +18,8 @@ router.patch("/:id/cancel", requireAuth, cancelReservation);
 // GET /reservations/amenity/:amenityId -> get all reservations for a specific amenity
 router.get("/amenity/:amenityId", requireAuth, getAmenityReservations);
 
+
+// PATCH /reservations/:id/hide -> hide a reservation from the user
+router.patch("/:id/hide", requireAuth, hideReservationFromUser);
 
 export default router;
