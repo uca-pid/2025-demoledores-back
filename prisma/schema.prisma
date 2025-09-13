@@ -56,7 +56,6 @@ model Reservation {
   @@index([amenityId, startTime, endTime]) 
 }
 
-
 model Apartment {
   id           Int      @id @default(autoincrement())
   unit         String
