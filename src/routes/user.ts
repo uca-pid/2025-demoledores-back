@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../auth_middleware.ts";
-import { updateUserName, updateUserPassword } from "../controllers/user.ts";
+import { updateUserName, updateUserPassword, deleteUser } from "../controllers/user.ts";
 
 const router = Router();
 
@@ -9,5 +9,8 @@ router.patch("/name", requireAuth, updateUserName);
 
 // PATCH /user/password -> actualizar la contraseña del usuario logueado
 router.patch("/password", requireAuth, updateUserPassword);
+
+// DELETE /user -> delete user account
+router.delete("/", requireAuth, deleteUser);
 
 export default router;
