@@ -15,6 +15,11 @@ export const createReservation = async (req: Request, res: Response) => {
     const start = new Date(startTime);
     const end = new Date(endTime);
 
+    // Validate that the dates are valid
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ message: "Invalid date format" });
+    }
+
     const amenity = await prisma.amenity.findUnique({ where: { id: amenityId } });
     if (!amenity) return res.status(404).json({ message: "Amenity not found" });
 

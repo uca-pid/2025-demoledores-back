@@ -104,6 +104,7 @@ export const validateAdmin = async (req: Request, res: Response, next: NextFunct
 
     // 5. Agregar información del usuario a la request
     (req as any).user = user;
+    (req as any).userId = user.id; // Add userId for compatibility
     
     next();
 
