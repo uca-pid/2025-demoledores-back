@@ -1,8 +1,8 @@
 import type { Request, Response } from "express";
-import { prisma } from "../prismaClient.ts";
+import { prisma } from "../prismaClient";
 import bcrypt from "bcrypt";
 
-// PATCH /user/name – Actualizar nombre de usuario
+// PATCH /user/name 
 export const updateUserName = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.id;
@@ -26,7 +26,7 @@ export const updateUserName = async (req: Request, res: Response) => {
   }
 };
 
-// PATCH /user/password – Cambiar contraseña
+// PATCH /user/password 
 export const updateUserPassword = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.id;
@@ -37,14 +37,12 @@ export const updateUserPassword = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Missing parameters" });
     }
 
-    // Buscar al usuario para verificar contraseña actual
     const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) return res.status(404).json({ message: "Usuario no encontrado" });
 
     const isMatch = await bcrypt.compare(currentPassword, user.password);
-    if (!isMatch) return res.status(403).json({ message: "Current password is incorrect" });
+    if (!isMatch) return res.status(403).json({ message: "La contraseña actual es incorrecta" });
 
-    // Hashear nueva contraseña
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     await prisma.user.update({
@@ -52,37 +50,56 @@ export const updateUserPassword = async (req: Request, res: Response) => {
       data: { password: hashedPassword },
     });
 
-    res.json({ message: "Password updated successfully" });
+    res.json({ message: "Contraseña actualizada con éxito" });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Internal server error" });
+    res.status(500).json({ message: "Error al procesar la solicitud" });
   }
 };
 
-// DELETE /user – Delete user account
+// DELETE /user 
 export const deleteUser = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.id;
 
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
-    // Check if user exists
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const user = await prisma.user.findUnique({ 
+      where: { id: userId },
+      include: {
+        ownedApartments: true
+      }
+    });
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Delete user's reservations first (due to foreign key constraints)
-    await prisma.reservation.deleteMany({
-      where: { userId: userId }
+    if (user.ownedApartments && user.ownedApartments.length > 0) {
+      return res.status(409).json({ 
+        message: "No se puede eliminar la cuenta: eres propietario de departamentos. Contacta al administrador.",
+        error: "USER_OWNS_APARTMENTS"
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.claimAdhesion.deleteMany({
+        where: { userId: userId }
+      });
+
+      await tx.claim.deleteMany({
+        where: { userId: userId }
+      });
+
+      await tx.reservation.deleteMany({
+        where: { userId: userId }
+      });
+
+      await tx.user.delete({
+        where: { id: userId }
+      });
     });
 
-    // Delete the user
-    await prisma.user.delete({
-      where: { id: userId }
-    });
-
-    res.json({ message: "User account deleted successfully" });
+    res.json({ message: "Cuenta de usuario eliminada con éxito" });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Internal server error" });
+    console.error('Error al eliminar usuario:', error);
+    res.status(500).json({ message: "Error al procesar la solicitud" });
   }
 };

@@ -1,9 +1,9 @@
 import { Router } from "express";
-import { getAmenities } from "../controllers/get_ammenities.ts";
-import { requireAuth } from "../auth_middleware.ts";
+import { getAmenities } from "../controllers/get_ammenities";
+import { requireAuth } from "../auth_middleware";
 
 const router = Router();
 
-router.get("/", requireAuth, getAmenities); // protegida con JWT
+router.get("/", requireAuth, getAmenities);
 
 export default router;

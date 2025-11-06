@@ -1,16 +1,11 @@
 import type { Request, Response } from "express";
-import { prisma } from "../prismaClient.ts";
-import { wouldBeLastAdmin } from "../middleware/adminMiddleware.ts";
+import { prisma } from "../prismaClient";
+import { emailService } from "../services/emailService";
 
-/**
- * GET /admin/stats - Estadísticas generales del sistema
- * Acceso: Solo administradores
- */
 export const getSystemStats = async (req: Request, res: Response) => {
   try {
-    console.log(`📊 [ADMIN STATS] User ${(req as any).user.email} requesting system stats`);
+    console.log(`[ADMIN STATS] User ${(req as any).user.email} requesting system stats`);
 
-    // Consultas paralelas para mejor rendimiento
     const [
       totalUsers,
       totalApartments,
@@ -23,9 +18,9 @@ export const getSystemStats = async (req: Request, res: Response) => {
       prisma.reservation.count(),
       prisma.reservation.count({
         where: {
-          status: "confirmed",
+          status: { name: "confirmada" },
           endTime: {
-            gte: new Date() // Reservas que aún no han terminado
+            gte: new Date() // Reservas que no terminaron
           }
         }
       }),
@@ -41,7 +36,7 @@ export const getSystemStats = async (req: Request, res: Response) => {
       generatedAt: new Date().toISOString()
     };
 
-    console.log(`✅ [ADMIN STATS] Stats generated successfully:`, stats);
+    console.log(`[ADMIN STATS] Stats generated successfully:`, stats);
 
     res.json(stats);
   } catch (error) {
@@ -52,10 +47,6 @@ export const getSystemStats = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * GET /admin/users - Listar todos los usuarios con información completa
- * Acceso: Solo administradores
- */
 export const getAllUsers = async (req: Request, res: Response) => {
   try {
     console.log(`👥 [ADMIN USERS] User ${(req as any).user.email} requesting all users`);
@@ -88,7 +79,6 @@ export const getAllUsers = async (req: Request, res: Response) => {
       ]
     });
 
-    // Formatear respuesta con información adicional
     const formattedUsers = users.map(user => ({
       id: user.id,
       name: user.name,
@@ -105,7 +95,7 @@ export const getAllUsers = async (req: Request, res: Response) => {
       ownedApartmentsCount: user._count.ownedApartments
     }));
 
-    console.log(`✅ [ADMIN USERS] Retrieved ${formattedUsers.length} users`);
+    console.log(` [ADMIN USERS] Retrieved ${formattedUsers.length} users`);
 
     res.json({
       users: formattedUsers,
@@ -120,35 +110,28 @@ export const getAllUsers = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * PUT /admin/users/:id/role - Cambiar role de un usuario
- * Acceso: Solo administradores
- * Protección: No permite eliminar el último admin
- */
 export const updateUserRole = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { role } = req.body;
     const adminUser = (req as any).user;
 
-    console.log(`🔄 [ADMIN ROLE CHANGE] User ${adminUser.email} attempting to change user ${id} role to ${role}`);
+    console.log(`[ADMIN ROLE CHANGE] User ${adminUser.email} attempting to change user ${id} role to ${role}`);
 
-    // Validar que el role sea válido
     const validRoles = ["admin", "tenant", "owner"];
     if (!role || !validRoles.includes(role)) {
       return res.status(400).json({ 
-        message: "Invalid role. Must be: admin, tenant, or owner" 
+        message: "Rol inválido. Debe ser: admin, tenant o owner" 
       });
     }
 
     const userId = parseInt(id || "");
     if (isNaN(userId)) {
       return res.status(400).json({ 
-        message: "Invalid user ID" 
+        message: "ID de usuario inválido" 
       });
     }
 
-    // Verificar que el usuario existe
     const targetUser = await prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, name: true, email: true, role: true }
@@ -156,22 +139,10 @@ export const updateUserRole = async (req: Request, res: Response) => {
 
     if (!targetUser) {
       return res.status(404).json({ 
-        message: "User not found" 
+        message: "Usuario no encontrado" 
       });
     }
 
-    // PROTECCIÓN CRÍTICA: No permitir eliminar el último admin
-    if (targetUser.role === "admin" && role !== "admin") {
-      const isLastAdmin = await wouldBeLastAdmin(userId);
-      if (isLastAdmin) {
-        console.log(`🚨 [SECURITY] Attempt to remove last admin blocked. User: ${adminUser.email}, Target: ${targetUser.email}`);
-        return res.status(403).json({ 
-          message: "Cannot remove admin role from the last administrator in the system" 
-        });
-      }
-    }
-
-    // Actualizar el role
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { role },
@@ -183,10 +154,10 @@ export const updateUserRole = async (req: Request, res: Response) => {
       }
     });
 
-    console.log(`✅ [ADMIN ROLE CHANGE] Successfully changed user ${targetUser.email} role from ${targetUser.role} to ${role}`);
+    console.log(` [ADMIN ROLE CHANGE] Successfully changed user ${targetUser.email} role from ${targetUser.role} to ${role}`);
 
     res.json({
-      message: "User role updated successfully",
+      message: "Rol de usuario actualizado con éxito",
       user: updatedUser,
       previousRole: targetUser.role,
       updatedBy: adminUser.email,
@@ -196,27 +167,23 @@ export const updateUserRole = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("❌ [ADMIN ROLE CHANGE ERROR]", error);
     res.status(500).json({ 
-      message: "Error updating user role" 
+      message: "Error al actualizar el rol de usuario" 
     });
   }
 };
 
-/**
- * GET /admin/reservations - Obtener todas las reservas del sistema
- * Acceso: Solo administradores
- */
+
 export const getAllReservations = async (req: Request, res: Response) => {
   try {
     const { status, amenityId, limit = "50" } = req.query;
     const adminUser = (req as any).user;
 
-    console.log(`📋 [ADMIN RESERVATIONS] User ${adminUser.email} requesting reservations. Filters:`, { status, amenityId, limit });
+    console.log(` [ADMIN RESERVATIONS] User ${adminUser.email} requesting reservations. Filters:`, { status, amenityId, limit });
 
-    // Construir filtros
     const where: any = {};
     
     if (status && typeof status === "string") {
-      where.status = status;
+      where.status = { name: status };
     }
     
     if (amenityId && typeof amenityId === "string") {
@@ -247,13 +214,14 @@ export const getAllReservations = async (req: Request, res: Response) => {
             capacity: true,
             maxDuration: true
           }
-        }
+        },
+        status: true
       },
       orderBy: { createdAt: "desc" },
       take: maxLimit
     });
 
-    console.log(`✅ [ADMIN RESERVATIONS] Retrieved ${reservations.length} reservations`);
+    console.log(` [ADMIN RESERVATIONS] Retrieved ${reservations.length} reservations`);
 
     res.json({
       reservations,
@@ -265,42 +233,68 @@ export const getAllReservations = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("❌ [ADMIN RESERVATIONS ERROR]", error);
     res.status(500).json({ 
-      message: "Error fetching reservations" 
+      message: "Error al obtener las reservas" 
     });
   }
 };
 
-/**
- * POST /admin/amenities - Crear nuevo amenity
- * Acceso: Solo administradores
- */
+
 export const createAmenity = async (req: Request, res: Response) => {
   try {
-    const { name, capacity, maxDuration } = req.body;
+    const { name, capacity, maxDuration, openTime, closeTime, isActive, requiresApproval } = req.body;
     const adminUser = (req as any).user;
 
-    console.log(`➕ [ADMIN CREATE AMENITY] User ${adminUser.email} creating amenity:`, { name, capacity, maxDuration });
+    console.log(`➕ [ADMIN CREATE AMENITY] User ${adminUser.email} creating amenity:`, { name, capacity, maxDuration, openTime, closeTime, isActive, requiresApproval });
 
     // Validaciones
     if (!name || typeof name !== "string" || name.trim().length === 0) {
       return res.status(400).json({ 
-        message: "Amenity name is required and must be a non-empty string" 
+        message: "El nombre de la amenity es obligatorio y debe ser una cadena no vacía" 
       });
     }
 
     if (!capacity || typeof capacity !== "number" || capacity < 1) {
       return res.status(400).json({ 
-        message: "Capacity is required and must be a positive number" 
+        message: "La capacidad es obligatoria y debe ser un número positivo" 
       });
     }
 
     if (!maxDuration || typeof maxDuration !== "number" || maxDuration < 1) {
       return res.status(400).json({ 
-        message: "Max duration is required and must be a positive number (in minutes)" 
+        message: "La duración máxima es obligatoria y debe ser un número positivo (en minutos)" 
       });
     }
 
-    // Verificar que no exista un amenity con el mismo nombre
+    // Validaciones de horarios
+    if (openTime !== undefined && openTime !== null) {
+      if (typeof openTime !== "string" || !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(openTime)) {
+        return res.status(400).json({ 
+          message: "El horario de apertura debe estar en formato HH:MM (24 horas)" 
+        });
+      }
+    }
+
+    if (closeTime !== undefined && closeTime !== null) {
+      if (typeof closeTime !== "string" || !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(closeTime)) {
+        return res.status(400).json({ 
+          message: "El horario de cierre debe estar en formato HH:MM (24 horas)" 
+        });
+      }
+    }
+
+    if (openTime && closeTime) {
+      const [openHour, openMin] = openTime.split(':').map(Number);
+      const [closeHour, closeMin] = closeTime.split(':').map(Number);
+      const openTimeMinutes = openHour * 60 + openMin;
+      const closeTimeMinutes = closeHour * 60 + closeMin;
+
+      if (openTimeMinutes >= closeTimeMinutes) {
+        return res.status(400).json({ 
+          message: "El horario de apertura debe ser anterior al horario de cierre" 
+        });
+      }
+    }
+
     const existingAmenity = await prisma.amenity.findFirst({
       where: {
         name: {
@@ -312,23 +306,40 @@ export const createAmenity = async (req: Request, res: Response) => {
 
     if (existingAmenity) {
       return res.status(409).json({ 
-        message: "An amenity with this name already exists" 
+        message: "Ya existe una amenity con este nombre" 
       });
     }
 
-    // Crear el amenity
+    const createData: any = {
+      name: name.trim(),
+      capacity,
+      maxDuration
+    };
+
+    if (openTime !== undefined) {
+      createData.openTime = openTime;
+    }
+
+    if (closeTime !== undefined) {
+      createData.closeTime = closeTime;
+    }
+
+    if (isActive !== undefined) {
+      createData.isActive = Boolean(isActive);
+    }
+
+    if (requiresApproval !== undefined) {
+      createData.requiresApproval = Boolean(requiresApproval);
+    }
+
     const newAmenity = await prisma.amenity.create({
-      data: {
-        name: name.trim(),
-        capacity,
-        maxDuration
-      }
+      data: createData
     });
 
-    console.log(`✅ [ADMIN CREATE AMENITY] Successfully created amenity: ${newAmenity.name} (ID: ${newAmenity.id})`);
+    console.log(`✅ [ADMIN CREATE AMENITY] Successfully created amenity: ${newAmenity.name} (ID: ${newAmenity.id}) with hours: ${newAmenity.openTime || 'N/A'} - ${newAmenity.closeTime || 'N/A'}, requiresApproval: ${newAmenity.requiresApproval}`);
 
     res.status(201).json({
-      message: "Amenity created successfully",
+      message: "Amenity creada con éxito",
       amenity: newAmenity,
       createdBy: adminUser.email,
       createdAt: new Date().toISOString()
@@ -337,48 +348,42 @@ export const createAmenity = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("❌ [ADMIN CREATE AMENITY ERROR]", error);
     res.status(500).json({ 
-      message: "Error creating amenity" 
+      message: "Error al crear la amenity" 
     });
   }
 };
 
-/**
- * PUT /admin/amenities/:id - Actualizar amenity existente
- * Acceso: Solo administradores
- */
 export const updateAmenity = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, capacity, maxDuration } = req.body;
+    const { name, capacity, maxDuration, openTime, closeTime, isActive, requiresApproval } = req.body;
     const adminUser = (req as any).user;
 
-    console.log(`✏️ [ADMIN UPDATE AMENITY] User ${adminUser.email} updating amenity ${id}:`, { name, capacity, maxDuration });
+    console.log(` [ADMIN UPDATE AMENITY] User ${adminUser.email} updating amenity ${id}:`, { name, capacity, maxDuration, openTime, closeTime, isActive, requiresApproval });
 
     const amenityId = parseInt(id || "");
     if (isNaN(amenityId)) {
       return res.status(400).json({ 
-        message: "Invalid amenity ID" 
+        message: "ID de amenity inválido" 
       });
     }
 
-    // Verificar que el amenity existe
     const existingAmenity = await prisma.amenity.findUnique({
       where: { id: amenityId }
     });
 
     if (!existingAmenity) {
       return res.status(404).json({ 
-        message: "Amenity not found" 
+        message: "Amenity no encontrada" 
       });
     }
 
-    // Preparar datos de actualización
     const updateData: any = {};
 
     if (name !== undefined) {
       if (typeof name !== "string" || name.trim().length === 0) {
         return res.status(400).json({ 
-          message: "Name must be a non-empty string" 
+          message: "El nombre debe ser una cadena no vacía" 
         });
       }
       updateData.name = name.trim();
@@ -387,7 +392,7 @@ export const updateAmenity = async (req: Request, res: Response) => {
     if (capacity !== undefined) {
       if (typeof capacity !== "number" || capacity < 1) {
         return res.status(400).json({ 
-          message: "Capacity must be a positive number" 
+          message: "La capacidad debe ser un número positivo" 
         });
       }
       updateData.capacity = capacity;
@@ -396,10 +401,59 @@ export const updateAmenity = async (req: Request, res: Response) => {
     if (maxDuration !== undefined) {
       if (typeof maxDuration !== "number" || maxDuration < 1) {
         return res.status(400).json({ 
-          message: "Max duration must be a positive number (in minutes)" 
+          message: "La duración máxima debe ser un número positivo (en minutos)" 
         });
       }
       updateData.maxDuration = maxDuration;
+    }
+
+    // Validaciones para horarios de operación
+    if (openTime !== undefined) {
+      if (openTime === null) {
+        updateData.openTime = null;
+      } else if (typeof openTime !== "string" || !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(openTime)) {
+        return res.status(400).json({ 
+          message: "El horario de apertura debe estar en formato HH:MM (24 horas)" 
+        });
+      } else {
+        updateData.openTime = openTime;
+      }
+    }
+
+    if (closeTime !== undefined) {
+      if (closeTime === null) {
+        updateData.closeTime = null;
+      } else if (typeof closeTime !== "string" || !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(closeTime)) {
+        return res.status(400).json({ 
+          message: "El horario de cierre debe estar en formato HH:MM (24 horas)" 
+        });
+      } else {
+        updateData.closeTime = closeTime;
+      }
+    }
+
+    if (isActive !== undefined) {
+      updateData.isActive = Boolean(isActive);
+    }
+
+    if (requiresApproval !== undefined) {
+      updateData.requiresApproval = Boolean(requiresApproval);
+    }
+
+    const finalOpenTime = updateData.openTime !== undefined ? updateData.openTime : existingAmenity.openTime;
+    const finalCloseTime = updateData.closeTime !== undefined ? updateData.closeTime : existingAmenity.closeTime;
+
+    if (finalOpenTime && finalCloseTime) {
+      const [openHour, openMin] = finalOpenTime.split(':').map(Number);
+      const [closeHour, closeMin] = finalCloseTime.split(':').map(Number);
+      const openTimeMinutes = openHour * 60 + openMin;
+      const closeTimeMinutes = closeHour * 60 + closeMin;
+
+      if (openTimeMinutes >= closeTimeMinutes) {
+        return res.status(400).json({ 
+          message: "El horario de apertura debe ser anterior al horario de cierre" 
+        });
+      }
     }
 
     // Si se está actualizando el nombre, verificar que no exista otro con el mismo nombre
@@ -418,21 +472,20 @@ export const updateAmenity = async (req: Request, res: Response) => {
 
       if (duplicateAmenity) {
         return res.status(409).json({ 
-          message: "An amenity with this name already exists" 
+          message: "Ya existe una amenity con este nombre" 
         });
       }
     }
 
-    // Actualizar amenity
     const updatedAmenity = await prisma.amenity.update({
       where: { id: amenityId },
       data: updateData
     });
 
-    console.log(`✅ [ADMIN UPDATE AMENITY] Successfully updated amenity: ${updatedAmenity.name} (ID: ${updatedAmenity.id})`);
+    console.log(` [ADMIN UPDATE AMENITY] Successfully updated amenity: ${updatedAmenity.name} (ID: ${updatedAmenity.id}) with hours: ${updatedAmenity.openTime || 'N/A'} - ${updatedAmenity.closeTime || 'N/A'}`);
 
     res.json({
-      message: "Amenity updated successfully",
+      message: "Amenity actualizada con éxito",
       amenity: updatedAmenity,
       updatedFields: Object.keys(updateData),
       updatedBy: adminUser.email,
@@ -442,23 +495,15 @@ export const updateAmenity = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("❌ [ADMIN UPDATE AMENITY ERROR]", error);
     res.status(500).json({ 
-      message: "Error updating amenity" 
+      message: "Error al actualizar la amenity" 
     });
   }
 };
 
-// ======================================================================
-// 🏢 GESTIÓN DE APARTAMENTOS - NUEVAS FUNCIONES
-// ======================================================================
-
-/**
- * GET /admin/apartments - Obtener todos los apartamentos con información completa
- * Acceso: Solo administradores
- */
 export const getAllApartments = async (req: Request, res: Response) => {
   try {
     const adminUser = (req as any).user;
-    console.log(`🏠 [ADMIN APARTMENTS] User ${adminUser.email} requesting all apartments`);
+    console.log(` [ADMIN APARTMENTS] User ${adminUser.email} requesting all apartments`);
 
     const apartments = await prisma.apartment.findMany({
       include: {
@@ -490,7 +535,6 @@ export const getAllApartments = async (req: Request, res: Response) => {
       ]
     });
 
-    // Formatear respuesta con información adicional
     const formattedApartments = apartments.map(apartment => {
       const isOccupied = apartment.tenants.length > 0;
       const tenant = apartment.tenants.length > 0 ? apartment.tenants[0] : null;
@@ -512,7 +556,7 @@ export const getAllApartments = async (req: Request, res: Response) => {
       };
     });
 
-    console.log(`✅ [ADMIN APARTMENTS] Retrieved ${formattedApartments.length} apartments`);
+    console.log(` [ADMIN APARTMENTS] Retrieved ${formattedApartments.length} apartments`);
 
     res.json({
       apartments: formattedApartments,
@@ -523,42 +567,37 @@ export const getAllApartments = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("❌ [ADMIN APARTMENTS ERROR]", error);
     res.status(500).json({ 
-      message: "Error fetching apartments list" 
+      message: "Error al obtener la lista de apartamentos" 
     });
   }
 };
 
-/**
- * POST /admin/apartments - Crear nuevo apartamento
- * Acceso: Solo administradores
- */
+
 export const createApartment = async (req: Request, res: Response) => {
   try {
     const { unit, floor, rooms, areaM2, observations, ownerId } = req.body;
     const adminUser = (req as any).user;
 
-    console.log(`➕ [ADMIN CREATE APARTMENT] User ${adminUser.email} creating apartment:`, { unit, floor, rooms, ownerId });
+    console.log(`[ADMIN CREATE APARTMENT] User ${adminUser.email} creating apartment:`, { unit, floor, rooms, ownerId });
 
-    // Validaciones obligatorias
     if (!unit || typeof unit !== "string" || unit.trim().length === 0) {
       return res.status(400).json({ 
-        message: "Unit is required and must be a non-empty string" 
+        message: "El unit es obligatorio y debe ser una cadena no vacía" 
       });
     }
 
     if (!floor || typeof floor !== "number" || floor < 1) {
       return res.status(400).json({ 
-        message: "Floor is required and must be a positive number (minimum 1)" 
+        message: "El piso es obligatorio y debe ser un número positivo (mínimo 1)" 
       });
     }
 
     if (!rooms || typeof rooms !== "number" || rooms < 1 || rooms > 10) {
       return res.status(400).json({ 
-        message: "Rooms is required and must be between 1 and 10" 
+        message: "Las habitaciones son obligatorias y deben estar entre 1 y 10" 
       });
     }
 
-    // Validar que el unit sea único
     const existingApartment = await prisma.apartment.findFirst({
       where: {
         unit: {
@@ -570,15 +609,14 @@ export const createApartment = async (req: Request, res: Response) => {
 
     if (existingApartment) {
       return res.status(409).json({ 
-        message: "An apartment with this unit number already exists" 
+        message: "Ya existe un apartamento con este número de unidad" 
       });
     }
 
-    // Validar owner si se proporciona
     if (ownerId) {
       if (typeof ownerId !== "number") {
         return res.status(400).json({ 
-          message: "Owner ID must be a number" 
+          message: "El ID del owner debe ser un número" 
         });
       }
 
@@ -589,18 +627,17 @@ export const createApartment = async (req: Request, res: Response) => {
 
       if (!owner) {
         return res.status(404).json({ 
-          message: "Owner not found" 
+          message: "Owner no encontrado" 
         });
       }
 
       if (owner.role !== "owner" && owner.role !== "admin") {
         return res.status(400).json({ 
-          message: "Owner must have role 'owner' or 'admin'" 
+          message: "El owner debe tener el rol de 'owner' o 'admin'" 
         });
       }
     }
 
-    // Preparar datos para crear
     const createData: any = {
       unit: unit.trim(),
       floor,
@@ -619,7 +656,6 @@ export const createApartment = async (req: Request, res: Response) => {
       createData.owner = { connect: { id: ownerId } };
     }
 
-    // Crear el apartamento
     const newApartment = await prisma.apartment.create({
       data: createData,
       include: {
@@ -634,10 +670,10 @@ export const createApartment = async (req: Request, res: Response) => {
       }
     });
 
-    console.log(`✅ [ADMIN CREATE APARTMENT] Successfully created apartment: ${newApartment.unit} (ID: ${newApartment.id})`);
+    console.log(`[ADMIN CREATE APARTMENT] Successfully created apartment: ${newApartment.unit} (ID: ${newApartment.id})`);
 
     res.status(201).json({
-      message: "Apartment created successfully",
+      message: "Apartamento creado con éxito",
       apartment: {
         ...newApartment,
         isOccupied: false,
@@ -650,31 +686,27 @@ export const createApartment = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("❌ [ADMIN CREATE APARTMENT ERROR]", error);
     res.status(500).json({ 
-      message: "Error creating apartment" 
+      message: "Error al crear el apartamento" 
     });
   }
 };
 
-/**
- * PUT /admin/apartments/:id - Actualizar apartamento existente
- * Acceso: Solo administradores
- */
+
 export const updateApartment = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { unit, floor, rooms, areaM2, observations, ownerId, tenantId } = req.body;
     const adminUser = (req as any).user;
 
-    console.log(`✏️ [ADMIN UPDATE APARTMENT] User ${adminUser.email} updating apartment ${id}:`, req.body);
+    console.log(` [ADMIN UPDATE APARTMENT] User ${adminUser.email} updating apartment ${id}:`, req.body);
 
     const apartmentId = parseInt(id || "");
     if (isNaN(apartmentId)) {
       return res.status(400).json({ 
-        message: "Invalid apartment ID" 
+        message: "ID de apartamento inválido" 
       });
     }
 
-    // Verificar que el apartamento existe
     const existingApartment = await prisma.apartment.findUnique({
       where: { id: apartmentId },
       include: {
@@ -685,23 +717,20 @@ export const updateApartment = async (req: Request, res: Response) => {
 
     if (!existingApartment) {
       return res.status(404).json({ 
-        message: "Apartment not found" 
+        message: "Apartamento no encontrado" 
       });
     }
 
-    // Preparar datos de actualización
     const updateData: any = {};
     const updatedFields: string[] = [];
 
-    // Validar y actualizar unit
     if (unit !== undefined) {
       if (typeof unit !== "string" || unit.trim().length === 0) {
         return res.status(400).json({ 
-          message: "Unit must be a non-empty string" 
+          message: "El unit debe ser un string no vacío" 
         });
       }
 
-      // Verificar que el nuevo unit no exista (excepto el actual)
       if (unit.trim() !== existingApartment.unit) {
         const duplicateApartment = await prisma.apartment.findFirst({
           where: {
@@ -717,7 +746,7 @@ export const updateApartment = async (req: Request, res: Response) => {
 
         if (duplicateApartment) {
           return res.status(409).json({ 
-            message: "An apartment with this unit number already exists" 
+            message: "Ya existe un apartamento con este número de unidad" 
           });
         }
       }
@@ -726,7 +755,6 @@ export const updateApartment = async (req: Request, res: Response) => {
       updatedFields.push("unit");
     }
 
-    // Validar y actualizar floor
     if (floor !== undefined) {
       if (typeof floor !== "number" || floor < 1) {
         return res.status(400).json({ 
@@ -737,7 +765,6 @@ export const updateApartment = async (req: Request, res: Response) => {
       updatedFields.push("floor");
     }
 
-    // Validar y actualizar rooms
     if (rooms !== undefined) {
       if (typeof rooms !== "number" || rooms < 1 || rooms > 10) {
         return res.status(400).json({ 
@@ -748,7 +775,6 @@ export const updateApartment = async (req: Request, res: Response) => {
       updatedFields.push("rooms");
     }
 
-    // Actualizar areaM2
     if (areaM2 !== undefined) {
       if (areaM2 === null) {
         updateData.areaM2 = null;
@@ -762,13 +788,11 @@ export const updateApartment = async (req: Request, res: Response) => {
       updatedFields.push("areaM2");
     }
 
-    // Actualizar observations
     if (observations !== undefined) {
       updateData.observations = observations === null ? null : observations.trim();
       updatedFields.push("observations");
     }
 
-    // Validar y actualizar owner
     if (ownerId !== undefined) {
       if (ownerId === null) {
         updateData.owner = { disconnect: true };
@@ -787,7 +811,7 @@ export const updateApartment = async (req: Request, res: Response) => {
 
         if (owner.role !== "owner" && owner.role !== "admin") {
           return res.status(400).json({ 
-            message: "Owner must have role 'owner' or 'admin'" 
+            message: "Owner debe tener el rol de 'owner' or 'admin'" 
           });
         }
 
@@ -795,15 +819,13 @@ export const updateApartment = async (req: Request, res: Response) => {
         updatedFields.push("owner");
       } else {
         return res.status(400).json({ 
-          message: "Owner ID must be a number or null" 
+          message: "El ID del owner debe ser un número o null" 
         });
       }
     }
 
-    // Validar y actualizar tenant
     if (tenantId !== undefined) {
       if (tenantId === null) {
-        // Desconectar tenant actual
         const currentTenant = existingApartment.tenants[0];
         if (currentTenant) {
           updateData.tenants = { disconnect: { id: currentTenant.id } };
@@ -817,23 +839,22 @@ export const updateApartment = async (req: Request, res: Response) => {
 
         if (!tenant) {
           return res.status(404).json({ 
-            message: "Tenant not found" 
+            message: "Inquilino no encontrado" 
           });
         }
 
         if (tenant.role !== "tenant") {
           return res.status(400).json({ 
-            message: "Tenant must have role 'tenant'" 
+            message: "El inquilino debe tener el rol de 'tenant'" 
           });
         }
 
         if (tenant.apartmentId && tenant.apartmentId !== apartmentId) {
           return res.status(400).json({ 
-            message: "Tenant is already assigned to another apartment" 
+            message: "El inquilino ya está asignado a otro apartamento" 
           });
         }
 
-        // Desconectar tenant actual si existe
         const currentTenant = existingApartment.tenants[0];
         if (currentTenant && currentTenant.id !== tenantId) {
           updateData.tenants = { 
@@ -846,12 +867,11 @@ export const updateApartment = async (req: Request, res: Response) => {
         updatedFields.push("tenant");
       } else {
         return res.status(400).json({ 
-          message: "Tenant ID must be a number or null" 
+          message: "El ID del inquilino debe ser un número o null" 
         });
       }
     }
 
-    // Actualizar apartamento si hay cambios
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ 
         message: "No fields to update" 
@@ -881,7 +901,7 @@ export const updateApartment = async (req: Request, res: Response) => {
       }
     });
 
-    console.log(`✅ [ADMIN UPDATE APARTMENT] Successfully updated apartment: ${updatedApartment.unit} (ID: ${updatedApartment.id})`);
+    console.log(`[ADMIN UPDATE APARTMENT] Successfully updated apartment: ${updatedApartment.unit} (ID: ${updatedApartment.id})`);
 
     res.json({
       message: "Apartment updated successfully",
@@ -903,11 +923,6 @@ export const updateApartment = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * DELETE /admin/apartments/:id - Eliminar apartamento
- * Acceso: Solo administradores
- * Validaciones: Verificar dependencias antes de eliminar
- */
 export const deleteApartment = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -922,7 +937,6 @@ export const deleteApartment = async (req: Request, res: Response) => {
       });
     }
 
-    // Verificar que el apartamento existe y obtener dependencias
     const apartment = await prisma.apartment.findUnique({
       where: { id: apartmentId },
       include: {
@@ -946,11 +960,10 @@ export const deleteApartment = async (req: Request, res: Response) => {
       });
     }
 
-    // Verificar si tiene usuarios asignados
     const assignedUsers = apartment.tenants.length + (apartment.owner ? 1 : 0);
     
     if (assignedUsers > 0) {
-      console.log(`🚨 [ADMIN DELETE APARTMENT] Cannot delete apartment ${id}: has assigned users`);
+      console.log(` [ADMIN DELETE APARTMENT] Cannot delete apartment ${id}: has assigned users`);
       return res.status(400).json({ 
         error: "Cannot delete apartment: has assigned users",
         details: {
@@ -961,20 +974,19 @@ export const deleteApartment = async (req: Request, res: Response) => {
       });
     }
 
-    // Verificar si tiene reservas (por parte de inquilinos del apartamento)
     const activeReservations = await prisma.reservation.count({
       where: {
         user: {
           apartmentId: apartmentId
         },
         status: {
-          in: ["confirmed", "pending"]
+          name: { in: ["confirmada", "pendiente"] }
         }
       }
     });
 
     if (activeReservations > 0) {
-      console.log(`🚨 [ADMIN DELETE APARTMENT] Cannot delete apartment ${id}: has active reservations`);
+      console.log(` [ADMIN DELETE APARTMENT] Cannot delete apartment ${id}: has active reservations`);
       return res.status(400).json({ 
         error: "Cannot delete apartment: has active reservations",
         details: {
@@ -984,12 +996,11 @@ export const deleteApartment = async (req: Request, res: Response) => {
       });
     }
 
-    // Proceder con la eliminación
     const deletedApartment = await prisma.apartment.delete({
       where: { id: apartmentId }
     });
 
-    console.log(`✅ [ADMIN DELETE APARTMENT] Successfully deleted apartment: ${deletedApartment.unit} (ID: ${deletedApartment.id})`);
+    console.log(` [ADMIN DELETE APARTMENT] Successfully deleted apartment: ${deletedApartment.unit} (ID: ${deletedApartment.id})`);
 
     res.json({
       message: "Apartment deleted successfully",
@@ -1010,14 +1021,7 @@ export const deleteApartment = async (req: Request, res: Response) => {
   }
 };
 
-// ======================================================================
-// 🏊 GESTIÓN DE AMENITIES COMPLETA - FUNCIONES NUEVAS Y ACTUALIZADAS
-// ======================================================================
 
-/**
- * GET /admin/amenities - Obtener todos los amenities con conteos de reservas
- * Acceso: Solo administradores
- */
 export const getAllAmenities = async (req: Request, res: Response) => {
   try {
     const adminUser = (req as any).user;
@@ -1036,13 +1040,12 @@ export const getAllAmenities = async (req: Request, res: Response) => {
       ]
     });
 
-    // Obtener conteo de reservas activas para cada amenity
     const amenitiesWithCounts = await Promise.all(
       amenities.map(async (amenity) => {
         const activeReservations = await prisma.reservation.count({
           where: {
             amenityId: amenity.id,
-            status: "confirmed",
+            status: { name: "confirmada" },
             endTime: {
               gte: new Date() // Reservas que aún no han terminado
             }
@@ -1054,6 +1057,10 @@ export const getAllAmenities = async (req: Request, res: Response) => {
           name: amenity.name,
           capacity: amenity.capacity,
           maxDuration: amenity.maxDuration,
+          openTime: amenity.openTime,
+          closeTime: amenity.closeTime,
+          isActive: amenity.isActive,
+          requiresApproval: amenity.requiresApproval,
           _count: {
             reservations: amenity._count.reservations,
             activeReservations
@@ -1062,7 +1069,7 @@ export const getAllAmenities = async (req: Request, res: Response) => {
       })
     );
 
-    console.log(`✅ [ADMIN AMENITIES] Retrieved ${amenitiesWithCounts.length} amenities`);
+    console.log(` [ADMIN AMENITIES] Retrieved ${amenitiesWithCounts.length} amenities`);
 
     res.json({
       amenities: amenitiesWithCounts,
@@ -1078,17 +1085,13 @@ export const getAllAmenities = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * DELETE /admin/amenities/:id - Eliminar amenity
- * Acceso: Solo administradores
- * Validaciones: Verificar que no tenga reservas activas
- */
+
 export const deleteAmenity = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const adminUser = (req as any).user;
 
-    console.log(`🗑️ [ADMIN DELETE AMENITY] User ${adminUser.email} attempting to delete amenity ${id}`);
+    console.log(` [ADMIN DELETE AMENITY] User ${adminUser.email} attempting to delete amenity ${id}`);
 
     const amenityId = parseInt(id || "");
     if (isNaN(amenityId)) {
@@ -1097,7 +1100,6 @@ export const deleteAmenity = async (req: Request, res: Response) => {
       });
     }
 
-    // Verificar que el amenity existe
     const amenity = await prisma.amenity.findUnique({
       where: { id: amenityId },
       select: {
@@ -1114,115 +1116,413 @@ export const deleteAmenity = async (req: Request, res: Response) => {
       });
     }
 
-    // Verificar si tiene reservas activas o futuras
+    const allReservations = await prisma.reservation.count({
+      where: {
+        amenityId: amenityId
+      }
+    });
+
     const activeReservations = await prisma.reservation.count({
       where: {
         amenityId: amenityId,
         status: {
-          in: ["confirmed", "pending"]
+          name: { in: ["confirmada", "pendiente"] }
         },
         endTime: {
-          gte: new Date() // Reservas que aún no han terminado o están por empezar
+          gte: new Date()
         }
       }
     });
 
-    if (activeReservations > 0) {
-      console.log(`🚨 [ADMIN DELETE AMENITY] Cannot delete amenity ${id}: has ${activeReservations} active reservations`);
-      return res.status(409).json({ 
-        message: "No se puede eliminar: el amenity tiene reservas activas",
-        details: {
-          activeReservations,
-          amenityName: amenity.name
+    console.log(` [ADMIN DELETE AMENITY] Amenity ${amenity.name}: ${allReservations} total reservations, ${activeReservations} active`);
+
+    const result = await prisma.$transaction(async (tx) => {
+      
+      const deletedReservations = await tx.reservation.deleteMany({
+        where: {
+          amenityId: amenityId
         }
       });
-    }
 
-    // Proceder con la eliminación
-    const deletedAmenity = await prisma.amenity.delete({
-      where: { id: amenityId }
+      console.log(`[ADMIN DELETE AMENITY] Deleted ${deletedReservations.count} reservations for amenity ${amenity.name}`);
+
+      const deletedAmenity = await tx.amenity.delete({
+        where: { id: amenityId }
+      });
+
+      return { deletedAmenity, deletedReservationsCount: deletedReservations.count };
     });
 
-    console.log(`✅ [ADMIN DELETE AMENITY] Successfully deleted amenity: ${deletedAmenity.name} (ID: ${deletedAmenity.id})`);
+    console.log(`[ADMIN DELETE AMENITY] Successfully deleted amenity: ${result.deletedAmenity.name} (ID: ${result.deletedAmenity.id}) and ${result.deletedReservationsCount} related reservations`);
 
-    res.status(204).send(); // 204 No Content
+    res.status(200).json({
+      message: "Amenity eliminado exitosamente",
+      deletedAmenity: {
+        id: result.deletedAmenity.id,
+        name: result.deletedAmenity.name
+      },
+      deletedReservations: result.deletedReservationsCount,
+      deletedBy: adminUser.email,
+      deletedAt: new Date().toISOString()
+    });
 
   } catch (error) {
     console.error("❌ [ADMIN DELETE AMENITY ERROR]", error);
     res.status(500).json({ 
-      message: "Error deleting amenity" 
+      message: "Error al eliminar el amenity" 
     });
   }
 };
 
-/**
- * GET /admin/amenities/:id/reservations - Obtener todas las reservas de un amenity específico
- * Acceso: Solo administradores
- */
 export const getAmenityDetailReservations = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { status, limit = "50" } = req.query;
-    const adminUser = (req as any).user;
-
-    console.log(`📋 [ADMIN AMENITY RESERVATIONS] User ${adminUser.email} requesting reservations for amenity ${id}. Filters:`, { status, limit });
 
     const amenityId = parseInt(id || "");
     if (isNaN(amenityId)) {
-      return res.status(400).json({ 
-        message: "Invalid amenity ID" 
-      });
+      return res.status(400).json({ message: "ID de amenity inválido" });
     }
 
-    // Verificar que el amenity existe
     const amenity = await prisma.amenity.findUnique({
       where: { id: amenityId },
-      select: {
-        id: true,
-        name: true,
-        capacity: true,
-        maxDuration: true
-      }
+      select: { id: true, name: true, capacity: true, maxDuration: true }
     });
 
     if (!amenity) {
-      return res.status(404).json({ 
-        message: "Amenity no encontrado" 
+      return res.status(404).json({ message: "Amenity no encontrado" });
+    }
+
+    const where: any = { amenityId };
+
+    if (status === "active") {
+      where.status = { name: "confirmada" };
+      where.endTime = { gte: new Date() };
+    } else if (status) {
+      where.status = { name: status };
+    }
+
+    const maxLimit = Math.min(parseInt(limit as string) || 50, 200);
+
+    const [reservations, totalCount] = await Promise.all([
+      prisma.reservation.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              apartment: { select: { unit: true, floor: true } }
+            }
+          },
+          status: true
+        },
+        orderBy: { startTime: "desc" },
+        take: maxLimit
+      }),
+      prisma.reservation.count({ where })
+    ]);
+
+    const formattedReservations = reservations.map(r => ({
+      id: r.id,
+      startTime: r.startTime,
+      endTime: r.endTime,
+      status: r.status.name,
+      createdAt: r.createdAt,
+      user: {
+        id: r.user.id,
+        name: r.user.name,
+        email: r.user.email,
+        apartment: r.user.apartment
+      }
+    }));
+
+    console.log(`[ADMIN] Retrieved ${formattedReservations.length} reservations for ${amenity.name}`);
+
+    res.json({
+      reservations: formattedReservations,
+      amenityName: amenity.name,
+      amenityId: amenity.id,
+      totalCount,
+      filters: { status, limit: maxLimit }
+    });
+
+  } catch (error) {
+    console.error("❌ [ADMIN AMENITY RESERVATIONS ERROR]", error);
+    res.status(500).json({ message: "Error al obtener las reservas del amenity" });
+  }
+};
+
+export const approveReservation = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const adminUser = (req as any).user;
+
+    console.log(` [ADMIN APPROVE RESERVATION] Admin ${adminUser.email} approving reservation ${id}`);
+
+    const reservationId = parseInt(id || "");
+    if (isNaN(reservationId)) {
+      return res.status(400).json({ 
+        message: "ID de reserva inválido" 
       });
     }
 
-    // Construir filtros para las reservas
-    const where: any = {
-      amenityId: amenityId
-    };
-
-    // Filtrar por status si se proporciona
-    if (status && typeof status === "string") {
-      const validStatuses = ["active", "confirmed", "pending", "cancelled", "completed"];
-      
-      if (status === "active") {
-        // Reservas activas = confirmadas y que aún no han terminado
-        where.status = "confirmed";
-        where.endTime = {
-          gte: new Date()
-        };
-      } else if (status === "completed") {
-        // Reservas completadas = confirmadas y que ya terminaron
-        where.status = "confirmed";
-        where.endTime = {
-          lt: new Date()
-        };
-      } else if (validStatuses.includes(status)) {
-        where.status = status;
+    const reservation = await prisma.reservation.findUnique({
+      where: { id: reservationId },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true }
+        },
+        amenity: {
+          select: { id: true, name: true, capacity: true }
+        },
+        status: true
       }
+    });
+
+    if (!reservation) {
+      return res.status(404).json({ 
+        message: "Reserva no encontrada" 
+      });
     }
 
-    const limitNum = parseInt(limit as string) || 50;
-    const maxLimit = Math.min(limitNum, 200); // Máximo 200 para evitar sobrecarga
+    if (reservation.status.name !== "pendiente") {
+      return res.status(400).json({ 
+        message: `No se puede aprobar una reserva con estado: ${reservation.status.label}` 
+      });
+    }
 
-    // Obtener las reservas
-    const reservations = await prisma.reservation.findMany({
-      where,
+    // Verificar que no haya conflictos de capacidad
+    const overlappingCount = await prisma.reservation.count({
+      where: {
+        amenityId: reservation.amenityId,
+        status: { name: "confirmada" },
+        AND: [
+          { startTime: { lt: reservation.endTime } },
+          { endTime: { gt: reservation.startTime } },
+        ],
+      },
+    });
+
+    console.log(` [CAPACITY CHECK] Amenity: ${reservation.amenity.name}, Capacity: ${reservation.amenity.capacity}, Current confirmed: ${overlappingCount}`);
+
+    if (overlappingCount >= reservation.amenity.capacity) {
+      // Auto-rechazar la reserva si no hay capacidad
+      await prisma.$transaction(async (tx) => {
+        
+        await tx.reservation.update({
+          where: { id: reservationId },
+          data: { 
+            status: { connect: { name: "cancelada" } }
+          }
+        });
+
+        const cancelledType = await tx.userNotificationType.findUnique({
+          where: { name: 'reservation_cancelled' }
+        });
+        
+        await tx.userNotification.create({
+          data: {
+            userId: reservation.user.id,
+            reservationId: reservationId,
+            typeId: cancelledType!.id,
+            title: 'Reserva Rechazada Automáticamente',
+            message: `Tu reserva para ${reservation.amenity.name} fue rechazada porque otras reservas llenaron la capacidad disponible mientras tu solicitud estaba pendiente.`
+          }
+        });
+      });
+
+      // email de rechazo automático
+      emailService.sendReservationCancellationEmail(
+        reservation.user.email,
+        reservation.user.name,
+        reservation.amenity.name,
+        reservation.startTime,
+        reservation.endTime
+      ).catch(err => console.error('Error sending auto-rejection email:', err));
+
+      console.log(` [AUTO-REJECT] Reservation ${id} auto-rejected due to full capacity`);
+
+      return res.status(409).json({ 
+        message: "No se puede aprobar: el horario está lleno. La reserva ha sido rechazada automáticamente y el usuario ha sido notificado.",
+        autoRejected: true
+      });
+    }
+
+    const approvedReservation = await prisma.$transaction(async (tx) => {
+     
+      const updated = await tx.reservation.update({
+        where: { id: reservationId },
+        data: { 
+          status: { connect: { name: "confirmada" } }
+        },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true }
+          },
+          amenity: true,
+          status: true
+        }
+      });
+
+      const confirmedType = await tx.userNotificationType.findUnique({
+        where: { name: 'reservation_confirmed' }
+      });
+      
+      await tx.userNotification.create({
+        data: {
+          userId: reservation.user.id,
+          reservationId: reservationId,
+          typeId: confirmedType!.id,
+          title: 'Reserva Aprobada',
+          message: `Tu reserva para ${reservation.amenity.name} ha sido aprobada por un administrador.`
+        }
+      });
+
+      return updated;
+    });
+
+    // email de confirmación
+    emailService.sendReservationConfirmationEmail(
+      reservation.user.email,
+      reservation.user.name,
+      reservation.amenity.name,
+      reservation.startTime,
+      reservation.endTime
+    ).catch(err => console.error('Error sending approval email:', err));
+
+    console.log(` [ADMIN APPROVE RESERVATION] Reservation ${id} approved successfully`);
+
+    res.json({
+      message: "Reserva aprobada exitosamente",
+      reservation: approvedReservation,
+      approvedBy: adminUser.email,
+      approvedAt: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error(" [ADMIN APPROVE RESERVATION ERROR]", error);
+    res.status(500).json({ 
+      message: "Error al aprobar la reserva" 
+    });
+  }
+};
+
+export const rejectReservation = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const adminUser = (req as any).user;
+
+    console.log(` [ADMIN REJECT RESERVATION] Admin ${adminUser.email} rejecting reservation ${id}`);
+
+    const reservationId = parseInt(id || "");
+    if (isNaN(reservationId)) {
+      return res.status(400).json({ 
+        message: "ID de reserva inválido" 
+      });
+    }
+
+    const reservation = await prisma.reservation.findUnique({
+      where: { id: reservationId },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true }
+        },
+        amenity: {
+          select: { id: true, name: true, capacity: true }
+        },
+        status: true
+      }
+    });
+
+    if (!reservation) {
+      return res.status(404).json({ 
+        message: "Reserva no encontrada" 
+      });
+    }
+
+    if (reservation.status.name !== "pendiente") {
+      return res.status(400).json({ 
+        message: `No se puede rechazar una reserva con estado: ${reservation.status.label}` 
+      });
+    }
+
+    const rejectedReservation = await prisma.$transaction(async (tx) => {
+      
+      const updated = await tx.reservation.update({
+        where: { id: reservationId },
+        data: { 
+          status: { connect: { name: "cancelada" } }
+        },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true }
+          },
+          amenity: true,
+          status: true
+        }
+      });
+
+      const notificationMessage = reason 
+        ? `Tu reserva para ${reservation.amenity.name} ha sido rechazada. Motivo: ${reason}`
+        : `Tu reserva para ${reservation.amenity.name} ha sido rechazada por un administrador.`;
+
+      const cancelledType = await tx.userNotificationType.findUnique({
+        where: { name: 'reservation_cancelled' }
+      });
+      
+      await tx.userNotification.create({
+        data: {
+          userId: reservation.user.id,
+          reservationId: reservationId,
+          typeId: cancelledType!.id,
+          title: 'Reserva Rechazada',
+          message: notificationMessage
+        }
+      });
+
+      return updated;
+    });
+
+    // email de rechazo
+    emailService.sendReservationCancellationEmail(
+      reservation.user.email,
+      reservation.user.name,
+      reservation.amenity.name,
+      reservation.startTime,
+      reservation.endTime,
+      reason
+    ).catch(err => console.error('Error sending rejection email:', err));
+
+    console.log(` [ADMIN REJECT RESERVATION] Reservation ${id} rejected successfully`);
+
+    res.json({
+      message: "Reserva rechazada exitosamente",
+      reservation: rejectedReservation,
+      rejectedBy: adminUser.email,
+      rejectedAt: new Date().toISOString(),
+      reason: reason || null
+    });
+
+  } catch (error) {
+    console.error("❌ [ADMIN REJECT RESERVATION ERROR]", error);
+    res.status(500).json({ 
+      message: "Error al rechazar la reserva" 
+    });
+  }
+};
+
+export const getPendingReservations = async (req: Request, res: Response) => {
+  try {
+    const adminUser = (req as any).user;
+    console.log(`[ADMIN PENDING RESERVATIONS] Admin ${adminUser.email} requesting pending reservations`);
+
+    const pendingReservations = await prisma.reservation.findMany({
+      where: {
+        status: { name: "pendiente" }
+      },
       include: {
         user: {
           select: {
@@ -1236,48 +1536,464 @@ export const getAmenityDetailReservations = async (req: Request, res: Response) 
               }
             }
           }
-        }
+        },
+        amenity: {
+          select: {
+            id: true,
+            name: true,
+            capacity: true,
+            maxDuration: true
+          }
+        },
+        status: true
       },
-      orderBy: { startTime: "desc" },
-      take: maxLimit
+      orderBy: { createdAt: "desc" }
     });
 
-    // Obtener conteo total (sin límite)
-    const totalCount = await prisma.reservation.count({ where });
-
-    // Formatear las reservas
-    const formattedReservations = reservations.map(reservation => ({
-      id: reservation.id,
-      startTime: reservation.startTime,
-      endTime: reservation.endTime,
-      status: reservation.status,
-      createdAt: reservation.createdAt,
-      user: {
-        id: reservation.user.id,
-        name: reservation.user.name,
-        email: reservation.user.email,
-        apartment: reservation.user.apartment ? {
-          unit: reservation.user.apartment.unit,
-          floor: reservation.user.apartment.floor
-        } : null
-      }
-    }));
-
-    console.log(`✅ [ADMIN AMENITY RESERVATIONS] Retrieved ${formattedReservations.length} reservations for amenity ${amenity.name}`);
+    console.log(` [ADMIN PENDING RESERVATIONS] Found ${pendingReservations.length} pending reservations`);
 
     res.json({
-      reservations: formattedReservations,
-      amenityName: amenity.name,
-      amenityId: amenity.id,
-      totalCount,
-      filters: { status, limit: maxLimit },
+      reservations: pendingReservations,
+      totalCount: pendingReservations.length,
       retrievedAt: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error("❌ [ADMIN AMENITY RESERVATIONS ERROR]", error);
+    console.error("❌ [ADMIN PENDING RESERVATIONS ERROR]", error);
     res.status(500).json({ 
-      message: "Error fetching amenity reservations" 
+      message: "Error al obtener reservas pendientes" 
+    });
+  }
+};
+
+export const cancelReservationAsAdmin = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const adminUser = (req as any).user;
+
+    console.log(`🗑️ [ADMIN CANCEL RESERVATION] Admin ${adminUser.email} cancelling reservation ${id}`);
+
+    const reservationId = parseInt(id || "");
+    if (isNaN(reservationId)) {
+      return res.status(400).json({ 
+        message: "ID de reserva inválido" 
+      });
+    }
+
+    const reservation = await prisma.reservation.findUnique({
+      where: { id: reservationId },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true }
+        },
+        amenity: {
+          select: { id: true, name: true }
+        },
+        status: true
+      }
+    });
+
+    if (!reservation) {
+      return res.status(404).json({ 
+        message: "Reserva no encontrada" 
+      });
+    }
+
+    if (reservation.status.name === "cancelada") {
+      return res.status(400).json({ 
+        message: "La reserva ya está cancelada" 
+      });
+    }
+
+    const cancelledReservation = await prisma.$transaction(async (tx) => {
+      
+      const updated = await tx.reservation.update({
+        where: { id: reservationId },
+        data: { 
+          status: { connect: { name: "cancelada" } }
+        },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true }
+          },
+          amenity: true,
+          status: true
+        }
+      });
+
+      const notificationMessage = reason 
+        ? `Tu reserva para ${reservation.amenity.name} ha sido cancelada por un administrador. Motivo: ${reason}`
+        : `Tu reserva para ${reservation.amenity.name} ha sido cancelada por un administrador.`;
+
+      const cancelledType = await tx.userNotificationType.findUnique({
+        where: { name: 'reservation_cancelled' }
+      });
+      
+      await tx.userNotification.create({
+        data: {
+          userId: reservation.user.id,
+          reservationId: reservationId,
+          typeId: cancelledType!.id,
+          title: 'Reserva Cancelada por Administrador',
+          message: notificationMessage
+        }
+      });
+
+      return updated;
+    });
+
+    // email de cancelación
+    emailService.sendReservationCancellationEmail(
+      reservation.user.email,
+      reservation.user.name,
+      reservation.amenity.name,
+      reservation.startTime,
+      reservation.endTime,
+      reason // Pasar la razón al email
+    ).catch(err => console.error('Error sending admin cancellation email:', err));
+
+    console.log(` [ADMIN CANCEL RESERVATION] Reservation ${id} cancelled successfully by admin`);
+
+    res.json({
+      message: "Reserva cancelada exitosamente",
+      reservation: cancelledReservation,
+      cancelledBy: adminUser.email,
+      cancelledAt: new Date().toISOString(),
+      reason: reason || null
+    });
+
+  } catch (error) {
+    console.error(" [ADMIN CANCEL RESERVATION ERROR]", error);
+    res.status(500).json({ 
+      message: "Error al cancelar la reserva" 
+    });
+  }
+};
+
+export const getClaimsMonthlyStats = async (req: Request, res: Response) => {
+  try {
+    const adminUser = (req as any).user;
+    const { period = 'weekly', offset = '0' } = req.query;
+    const offsetDays = parseInt(offset as string) || 0;
+    
+    console.log(`[ADMIN CLAIMS STATS] User ${adminUser.email} requesting claims stats - period: ${period}, offset: ${offsetDays}`);
+
+    let claims;
+    let dataMap = new Map<string, any>();
+    const now = new Date();
+
+    if (period === 'daily') {
+      const daysCount = 7;
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - daysCount - offsetDays);
+      startDate.setHours(0, 0, 0, 0);
+      
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() - offsetDays);
+      endDate.setHours(23, 59, 59, 999);
+
+      claims = await prisma.claim.findMany({
+        where: { 
+          createdAt: { 
+            gte: startDate,
+            lte: endDate
+          } 
+        },
+        select: {
+          id: true,
+          createdAt: true,
+          status: { select: { name: true, label: true } }
+        },
+        orderBy: { createdAt: 'asc' }
+      });
+
+      for (let i = daysCount - 1; i >= 0; i--) {
+        const date = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate() - i);
+        const key = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+        dataMap.set(key, {
+          month: key,
+          label: date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }),
+          nuevo: 0, en_progreso: 0, resuelto: 0, cerrado: 0, total: 0
+        });
+      }
+
+      claims.forEach(claim => {
+        const claimDate = new Date(claim.createdAt);
+        const key = `${claimDate.getFullYear()}-${(claimDate.getMonth() + 1).toString().padStart(2, '0')}-${claimDate.getDate().toString().padStart(2, '0')}`;
+        if (dataMap.has(key)) {
+          const data = dataMap.get(key);
+          data.total++;
+          const statusName = claim.status.name;
+          if (statusName === 'pendiente') data.nuevo++;
+          else if (statusName === 'en_progreso') data.en_progreso++;
+          else if (statusName === 'resuelto') data.resuelto++;
+          else if (statusName === 'rechazado') data.cerrado++;
+        }
+      });
+
+    } else if (period === 'weekly') {
+      const weeksCount = 4;
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() - offsetDays);
+      endDate.setHours(23, 59, 59, 999);
+      
+      const startDate = new Date(endDate);
+      startDate.setDate(startDate.getDate() - (weeksCount * 7) + 1);
+      startDate.setHours(0, 0, 0, 0);
+
+      claims = await prisma.claim.findMany({
+        where: { 
+          createdAt: { 
+            gte: startDate,
+            lte: endDate
+          } 
+        },
+        select: {
+          id: true,
+          createdAt: true,
+          status: { select: { name: true, label: true } }
+        },
+        orderBy: { createdAt: 'asc' }
+      });
+
+      
+      const weekRanges: Array<{ key: string; weekStart: Date; weekEnd: Date }> = [];
+      
+      for (let i = weeksCount - 1; i >= 0; i--) {
+        const weekEnd = new Date(endDate);
+        weekEnd.setDate(weekEnd.getDate() - (i * 7));
+        weekEnd.setHours(23, 59, 59, 999);
+        
+        const weekStart = new Date(weekEnd);
+        weekStart.setDate(weekStart.getDate() - 6);
+        weekStart.setHours(0, 0, 0, 0);
+        
+        const key = `week-${i}-${weekStart.toISOString().split('T')[0]}`;
+        weekRanges.push({ key, weekStart, weekEnd });
+        
+        const label = `Sem ${weeksCount - i}`;
+        dataMap.set(key, {
+          month: key, 
+          label: label,
+          weekStart: weekStart.toISOString().split('T')[0],
+          weekEnd: weekEnd.toISOString().split('T')[0],
+          nuevo: 0, en_progreso: 0, resuelto: 0, cerrado: 0, total: 0
+        });
+      }
+
+      
+      claims.forEach(claim => {
+        const claimDate = new Date(claim.createdAt);
+        
+       
+        const weekRange = weekRanges.find(range => 
+          claimDate >= range.weekStart && claimDate <= range.weekEnd
+        );
+        
+        if (weekRange && dataMap.has(weekRange.key)) {
+          const data = dataMap.get(weekRange.key);
+          data.total++;
+          const statusName = claim.status.name;
+          if (statusName === 'pendiente') data.nuevo++;
+          else if (statusName === 'en_progreso') data.en_progreso++;
+          else if (statusName === 'resuelto') data.resuelto++;
+          else if (statusName === 'rechazado') data.cerrado++;
+        }
+      });
+
+    } else {
+
+      const monthsCount = 12;
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() - offsetDays);
+      endDate.setMonth(endDate.getMonth());
+      endDate.setDate(1);
+      endDate.setMonth(endDate.getMonth() + 1);
+      endDate.setDate(0); // Último día del mes
+      endDate.setHours(23, 59, 59, 999);
+      
+      const startDate = new Date(endDate);
+      startDate.setMonth(startDate.getMonth() - monthsCount + 1);
+      startDate.setDate(1);
+      startDate.setHours(0, 0, 0, 0);
+
+      claims = await prisma.claim.findMany({
+        where: { 
+          createdAt: { 
+            gte: startDate,
+            lte: endDate
+          } 
+        },
+        select: {
+          id: true,
+          createdAt: true,
+          status: { select: { name: true, label: true } }
+        },
+        orderBy: { createdAt: 'asc' }
+      });
+
+      for (let i = monthsCount - 1; i >= 0; i--) {
+        const date = new Date(endDate.getFullYear(), endDate.getMonth() - i, 1);
+        const key = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+        dataMap.set(key, {
+          month: key,
+          monthLabel: date.toLocaleDateString('es-ES', { month: 'short', year: 'numeric' }),
+          nuevo: 0, en_progreso: 0, resuelto: 0, cerrado: 0, total: 0
+        });
+      }
+
+      claims.forEach(claim => {
+        const claimDate = new Date(claim.createdAt);
+        const key = `${claimDate.getFullYear()}-${(claimDate.getMonth() + 1).toString().padStart(2, '0')}`;
+        if (dataMap.has(key)) {
+          const data = dataMap.get(key);
+          data.total++;
+          const statusName = claim.status.name;
+          if (statusName === 'pendiente') data.nuevo++;
+          else if (statusName === 'en_progreso') data.en_progreso++;
+          else if (statusName === 'resuelto') data.resuelto++;
+          else if (statusName === 'rechazado') data.cerrado++;
+        }
+      });
+    }
+
+    const data = Array.from(dataMap.values());
+    console.log(`[ADMIN CLAIMS STATS] Generated stats for ${data.length} periods`);
+
+    res.json({
+      data,
+      totalClaims: claims?.length || 0,
+      period,
+      offset: offsetDays,
+      generatedAt: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error("[ADMIN CLAIMS STATS ERROR]", error);
+    res.status(500).json({ 
+      message: "Error al obtener estadísticas de reclamos" 
+    });
+  }
+};
+
+export const getClaimsMetrics = async (req: Request, res: Response) => {
+  try {
+    const adminUser = (req as any).user;
+    const { startDate, endDate } = req.query;
+    
+    console.log(`[ADMIN CLAIMS METRICS] User ${adminUser.email} requesting claims metrics`, {
+      startDate,
+      endDate
+    });
+
+    const whereClause: any = {};
+    
+    if (startDate || endDate) {
+      whereClause.status = {
+        name: 'resuelto'
+      };
+      
+      whereClause.updatedAt = {};
+      if (startDate) {
+        whereClause.updatedAt.gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        whereClause.updatedAt.lte = new Date(endDate as string);
+      }
+    }
+
+    const claims = await prisma.claim.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        subject: true,
+        createdAt: true,
+        updatedAt: true,
+        category: { 
+          select: { 
+            name: true, 
+            label: true 
+          } 
+        },
+        status: { 
+          select: { 
+            name: true, 
+            label: true 
+          } 
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const totalClaims = claims.length;
+
+    const resolvedClaims = claims.filter(c => c.status.name === 'resuelto');
+    
+    let averageResolutionTime = 0;
+    if (resolvedClaims.length > 0) {
+      const totalResolutionTime = resolvedClaims.reduce((sum, claim) => {
+        const createdAt = new Date(claim.createdAt);
+        const resolvedAt = new Date(claim.updatedAt);
+        const diffDays = (resolvedAt.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+        return sum + diffDays;
+      }, 0);
+      averageResolutionTime = totalResolutionTime / resolvedClaims.length;
+    }
+
+    const resolutionRate = totalClaims > 0 
+      ? (resolvedClaims.length / totalClaims) * 100 
+      : 0;
+
+    const categoryMap = new Map<string, number>();
+    claims.forEach(claim => {
+      const category = claim.category?.label || claim.category?.name || 'Sin categoría';
+      categoryMap.set(category, (categoryMap.get(category) || 0) + 1);
+    });
+    
+    const byCategory = Array.from(categoryMap.entries())
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const statusMap = new Map<string, number>();
+    claims.forEach(claim => {
+      const status = claim.status.label || claim.status.name;
+      statusMap.set(status, (statusMap.get(status) || 0) + 1);
+    });
+    
+    const byStatus = Array.from(statusMap.entries())
+      .map(([status, count]) => ({ status, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const metrics = {
+      totalClaims,
+      averageResolutionTime,
+      resolutionRate,
+      byCategory,
+      byStatus,
+      dateFilter: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        applied: !!(startDate || endDate)
+      },
+      generatedAt: new Date().toISOString()
+    };
+
+    console.log(`[ADMIN CLAIMS METRICS] Generated metrics:`, {
+      totalClaims,
+      avgResolutionDays: averageResolutionTime.toFixed(2),
+      resolutionRate: resolutionRate.toFixed(2),
+      categories: byCategory.length,
+      statuses: byStatus.length,
+      dateFilterApplied: !!(startDate || endDate)
+    });
+
+    res.json(metrics);
+
+  } catch (error) {
+    console.error("[ADMIN CLAIMS METRICS ERROR]", error);
+    res.status(500).json({ 
+      message: "Error al obtener métricas de reclamos" 
     });
   }
 };

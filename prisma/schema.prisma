@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,7 +5,6 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -26,19 +19,37 @@ model User {
   ownedApartments Apartment[] @relation("OwnedApartments")
 
   reservations Reservation[] @relation("UserReservations")
+  claims       Claim[]       @relation("UserClaims")
+  claimAdhesions ClaimAdhesion[] @relation("UserClaimAdhesions")
+  adminNotifications AdminNotification[] @relation("AdminNotifications")
+  userNotifications UserNotification[] @relation("UserNotifications")
+  amenityRatings AmenityRating[] @relation("UserRatings")
   resetPasswordToken    String?       @unique
   resetPasswordExpires  DateTime?
   createdAt             DateTime      @default(now())
 }
 
-
-
 model Amenity {
   id           Int           @id @default(autoincrement())
   name         String
   capacity     Int
-  maxDuration  Int           // in minutes
+  maxDuration  Int 
+  openTime     String?  
+  closeTime    String? 
+  isActive     Boolean       @default(true)
+  requiresApproval Boolean   @default(false)
   reservations Reservation[]
+  ratings      AmenityRating[]
+}
+
+model ReservationStatus {
+  id     Int    @id @default(autoincrement())
+  name   String @unique // "pendiente", "confirmada", "cancelada", "finalizada"
+  label  String 
+  
+  reservations Reservation[]
+  
+  @@map("reservation_statuses")
 }
 
 model Reservation {
@@ -49,11 +60,15 @@ model Reservation {
   amenityId Int
   startTime DateTime
   endTime   DateTime
-  status    String    @default("pending") // "pending", "confirmed", "cancelled"
+  statusId  Int       @default(1)
+  status    ReservationStatus @relation(fields: [statusId], references: [id])
   hiddenFromUser Boolean   @default(false)
   createdAt DateTime  @default(now())
+  notifications UserNotification[] @relation("ReservationNotifications")
+  adminNotifications AdminNotification[] @relation("AdminReservationNotifications")
 
-  @@index([amenityId, startTime, endTime]) 
+  @@index([amenityId, startTime, endTime])
+  @@index([statusId])
 }
 
 model Apartment {
@@ -68,4 +83,172 @@ model Apartment {
   owner   User     @relation("OwnedApartments", fields: [ownerId], references: [id])
 
   tenants User[]   @relation("TenantApartments")
+}
+
+model ClaimCategory {
+  id     Int    @id @default(autoincrement())
+  name   String @unique // "ascensor", "plomeria", "electricidad", "temperatura", "areas_comunes", "edificio", "otro"
+  label  String 
+  icon   String?
+  color  String? 
+  
+  claims Claim[]
+  
+  @@map("claim_categories")
+}
+
+model ClaimPriority {
+  id     Int    @id @default(autoincrement())
+  name   String @unique // "baja", "media", "alta", "urgente"
+  label  String
+  level  Int
+  color  String?
+  
+  claims Claim[]
+  
+  @@map("claim_priorities")
+}
+
+model ClaimStatus {
+  id     Int    @id @default(autoincrement())
+  name   String @unique // "pendiente", "en_progreso", "resuelto", "rechazado"
+  label  String 
+  color  String?
+  
+  claims Claim[]
+  
+  @@map("claim_statuses")
+}
+
+model Claim {
+  id          Int      @id @default(autoincrement())
+  subject     String
+  categoryId  Int      @default(7)
+  category    ClaimCategory @relation(fields: [categoryId], references: [id])
+  description String
+  location    String
+  priorityId  Int      @default(2)
+  priority    ClaimPriority @relation(fields: [priorityId], references: [id])
+  statusId    Int      @default(1)
+  status      ClaimStatus @relation(fields: [statusId], references: [id])
+  adminNotes  String?
+  isAnonymous Boolean  @default(false)
+  
+  userId      Int
+  user        User     @relation("UserClaims", fields: [userId], references: [id])
+  adhesions   ClaimAdhesion[] @relation("ClaimAdhesions")
+  notifications AdminNotification[] @relation("ClaimNotifications")
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([statusId])
+  @@index([categoryId])
+  @@index([priorityId])
+}
+
+model ClaimAdhesion {
+  id           Int      @id @default(autoincrement())
+  claimId      Int
+  userId       Int
+  isSupport    Boolean  @default(true) // Likes/dislike de vecinos. true = de acuerdo, false = en desacuerdo
+  
+  claim        Claim    @relation("ClaimAdhesions", fields: [claimId], references: [id], onDelete: Cascade)
+  user         User     @relation("UserClaimAdhesions", fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([claimId, userId], name: "unique_user_claim_adhesion")
+  @@index([claimId])
+  @@index([userId])
+}
+
+model AdminNotificationType {
+  id     Int    @id @default(autoincrement())
+  name   String @unique // "nuevo_reclamo" | "reclamo_urgente" | "reserva_pendiente"
+  label  String
+  
+  notifications AdminNotification[]
+  
+  @@map("admin_notification_types")
+}
+
+model UserNotificationType {
+  id     Int    @id @default(autoincrement())
+  name   String @unique // "reserva_confirmada" | "reserva_cancelada" | "reserva_modificada"
+  label  String
+  
+  notifications UserNotification[]
+  
+  @@map("user_notification_types")
+}
+
+model AdminNotification {
+  id               Int      @id @default(autoincrement())
+  adminId          Int 
+  claimId          Int? 
+  reservationId    Int?
+  typeId           Int
+  type             AdminNotificationType @relation(fields: [typeId], references: [id])
+  isRead           Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  readAt           DateTime?
+  
+  admin            User     @relation("AdminNotifications", fields: [adminId], references: [id], onDelete: Cascade)
+  claim            Claim?   @relation("ClaimNotifications", fields: [claimId], references: [id], onDelete: Cascade)
+  reservation      Reservation? @relation("AdminReservationNotifications", fields: [reservationId], references: [id], onDelete: Cascade)
+  
+  @@index([adminId])
+  @@index([claimId])
+  @@index([reservationId])
+  @@index([typeId])
+  @@index([isRead])
+  @@index([adminId, isRead])
+  @@map("admin_notifications")
+}
+
+model UserNotification {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  reservationId    Int?
+  typeId           Int
+  type             UserNotificationType @relation(fields: [typeId], references: [id])
+  title            String
+  message          String 
+  isRead           Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  readAt           DateTime?
+  
+  user             User     @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  reservation      Reservation? @relation("ReservationNotifications", fields: [reservationId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([reservationId])
+  @@index([typeId])
+  @@index([isRead])
+  @@index([userId, isRead])
+  @@map("user_notifications")
+}
+
+model AmenityRating {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  amenityId        Int
+  overallRating    Float
+  cleanliness      Int?
+  equipment        Int?
+  comfort          Int?
+  compliance       Int?
+  comment          String?
+  createdAt        DateTime @default(now())
+  
+  user             User     @relation("UserRatings", fields: [userId], references: [id], onDelete: Cascade)
+  amenity          Amenity  @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, amenityId])
+  @@index([amenityId])
+  @@index([userId])
+  @@map("amenity_ratings")
 }
