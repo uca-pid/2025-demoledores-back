@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../prismaClient';
+import { awardPoints, updateUserStats } from './gamificationController';
 
 
 const parsePaginationParams = (page?: string, limit?: string) => {
@@ -12,7 +13,7 @@ const parsePaginationParams = (page?: string, limit?: string) => {
 const buildClaimFilters = (category?: string, status?: string, search?: string, userId?: number) => {
   const where: any = {};
 
-  console.log('🔍 [BUILD FILTERS] Input params:', { category, status, search, userId });
+  console.log(' [BUILD FILTERS] Input params:', { category, status, search, userId });
 
   if (userId) {
     where.userId = userId;
@@ -34,7 +35,7 @@ const buildClaimFilters = (category?: string, status?: string, search?: string, 
     ];
   }
 
-  console.log('🔍 [BUILD FILTERS] Generated where clause:', JSON.stringify(where, null, 2));
+  console.log('[BUILD FILTERS] Generated where clause:', JSON.stringify(where, null, 2));
   return where;
 };
 
@@ -136,7 +137,7 @@ const mapClaimWithCreatedBy = async (claim: any, requestingUser?: any) => {
 
 const getClaimsWithPagination = async (where: any, skip: number, limitNum: number, requestingUser?: any) => {
   try {
-    console.log('🔍 [GET CLAIMS PAGINATION] Starting query with params:', { skip, limitNum, where: JSON.stringify(where) });
+    console.log('[GET CLAIMS PAGINATION] Starting query with params:', { skip, limitNum, where: JSON.stringify(where) });
     
     const [claims, total] = await Promise.all([
       prisma.claim.findMany({
@@ -146,7 +147,19 @@ const getClaimsWithPagination = async (where: any, skip: number, limitNum: numbe
         orderBy: { createdAt: 'desc' },
         include: {
           user: {
-            select: { id: true, name: true, email: true }
+            select: { 
+              id: true, 
+              name: true, 
+              email: true,
+              gamification: {
+                include: {
+                  level: true,
+                  selectedTheme: true,
+                  selectedFrame: true,
+                  selectedEffect: true
+                }
+              }
+            }
           },
           category: true,
           priority: true,
@@ -156,10 +169,10 @@ const getClaimsWithPagination = async (where: any, skip: number, limitNum: numbe
       prisma.claim.count({ where })
     ]);
 
-    console.log(`🔍 [GET CLAIMS PAGINATION] Raw query returned ${claims.length} claims, total: ${total}`);
+    console.log(`[GET CLAIMS PAGINATION] Raw query returned ${claims.length} claims, total: ${total}`);
     
     const mappedClaims = await mapClaimsWithCreatedBy(claims, requestingUser);
-    console.log(`🔍 [GET CLAIMS PAGINATION] Mapped claims completed, returning ${mappedClaims.length} claims`);
+    console.log(`[GET CLAIMS PAGINATION] Mapped claims completed, returning ${mappedClaims.length} claims`);
     
     return { claims: mappedClaims, total };
   } catch (error) {
@@ -389,6 +402,12 @@ export const createClaim = async (req: Request, res: Response) => {
 
         return claim;
       });
+      
+      awardPoints(userId, "CLAIM_CREATED", { claimId: result.id })
+        .catch(err => console.error('Error awarding points:', err));
+      
+      updateUserStats(userId, 'claimsCreated')
+        .catch(err => console.error('Error updating stats:', err));
 
       const mappedClaim = await mapClaimWithCreatedBy(result, (req as any).user);
       res.status(201).json(mappedClaim);
@@ -600,6 +619,21 @@ export const updateClaimStatus = async (req: Request, res: Response) => {
           status: true
         }
       });
+      
+
+      if (statusRecord.name === 'resuelto') {
+        awardPoints(updatedClaim.userId, "CLAIM_RESOLVED", { claimId: updatedClaim.id })
+          .catch(err => console.error('Error awarding points:', err));
+        
+        updateUserStats(updatedClaim.userId, 'claimsResolved')
+          .catch(err => console.error('Error updating stats:', err));
+      } else if (statusRecord.name === 'rechazado') {
+        awardPoints(updatedClaim.userId, "CLAIM_REJECTED", { claimId: updatedClaim.id })
+          .catch(err => console.error('Error deducting points:', err));
+        
+        updateUserStats(updatedClaim.userId, 'claimsRejected')
+          .catch(err => console.error('Error updating stats:', err));
+      }
 
       const mappedUpdatedClaim = await mapClaimWithCreatedBy(updatedClaim, (req as any).user);
       res.json(mappedUpdatedClaim);
@@ -641,6 +675,54 @@ export const deleteAdminClaim = async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error('Error al eliminar reclamo (admin):', error);
+    res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+
+
+export const linkClaimToProjectFlowTask = async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    if (!checkAdminPermissions(user, res)) return;
+
+    const { id } = req.params;
+    const { projectFlowTaskId } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ message: "ID del reclamo es requerido" });
+    }
+
+    if (!projectFlowTaskId) {
+      return res.status(400).json({ message: "ID de tarea de ProjectFlow es requerido" });
+    }
+
+    const existingClaim = await prisma.claim.findUnique({
+      where: { id: parseInt(id) }
+    });
+
+    if (!existingClaim) {
+      return res.status(404).json({ message: "Reclamo no encontrado" });
+    }
+
+    const updatedClaim = await prisma.claim.update({
+      where: { id: parseInt(id) },
+      data: {
+        projectFlowTaskId
+      },
+      include: {
+        user: true,
+        category: true,
+        priority: true,
+        status: true,
+        adhesions: true
+      }
+    });
+
+    const mappedClaim = await mapClaimWithCreatedBy(updatedClaim, user);
+    res.json(mappedClaim);
+
+  } catch (error) {
+    console.error('Error al vincular reclamo con ProjectFlow:', error);
     res.status(500).json({ message: "Error interno del servidor" });
   }
 };

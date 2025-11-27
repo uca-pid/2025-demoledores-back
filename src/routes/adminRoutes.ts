@@ -5,13 +5,13 @@ import {
   getAllUsers,
   updateUserRole,
   getAllReservations,
+  getAllAmenities,
   createAmenity,
   updateAmenity,
   getAllApartments,
   createApartment,
   updateApartment,
   deleteApartment,
-  getAllAmenities,
   deleteAmenity,
   getAmenityDetailReservations,
   approveReservation,
@@ -20,11 +20,12 @@ import {
   cancelReservationAsAdmin,
   getClaimsMonthlyStats,
   getClaimsMetrics
-} from "../controllers/adminController";
+} from "../controllers/admin";
 import {
   getAdminClaims,
   updateClaimStatus,
-  deleteAdminClaim
+  deleteAdminClaim,
+  linkClaimToProjectFlowTask
 } from "../controllers/claimController";
 import {
   getAdminNotifications,
@@ -65,6 +66,7 @@ router.get("/claims", validateAdmin, getAdminClaims);
 router.get("/claims/stats", validateAdmin, getClaimsMonthlyStats);
 router.get("/claims/metrics", validateAdmin, getClaimsMetrics);
 router.put("/claims/:id/status", validateAdmin, updateClaimStatus);
+router.put("/claims/:id/projectflow-task", validateAdmin, linkClaimToProjectFlowTask);
 router.delete("/claims/:id", validateAdmin, deleteAdminClaim);
 
 
