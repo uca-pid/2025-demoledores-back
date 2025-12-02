@@ -1,8 +1,7 @@
 import { Request, Response } from "express";
 
 const PROJECT_FLOW_API = "http://apiprojectflow.semantic.com.ar";
-const PROJECT_FLOW_EMAIL = "US_Admin@gmail.com";
-const PROJECT_FLOW_PASSWORD = "SoTheGoodPassword123!";
+
 
 let cachedCookie: string | null = null;
 let tokenExpiry: number = 0;
